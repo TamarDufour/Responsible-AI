@@ -1,20 +1,26 @@
+# ========== Imports ==========
 import os
-import torch
+import time
+
 import pandas as pd
 import numpy as np
-from PIL import Image
+
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+from sklearn.metrics import confusion_matrix
+
+import torch
 from torch.utils.data import Dataset, DataLoader
+from torch import nn, optim
 from torchvision import transforms
 from torchvision.models import resnet18, ResNet18_Weights
-from torch import nn, optim
+
 from tqdm import tqdm
+from PIL import Image
 import matplotlib.pyplot as plt
+import seaborn as sns
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.image import show_cam_on_image
-from sklearn.metrics import confusion_matrix
-import seaborn as sns
 
 
 # ========== Parameters ==========
@@ -27,16 +33,54 @@ MODEL_PATH = "resnet18_ham10000.pt"
 
 print("Setting up parameters...")
 
+TRAIN_VAL_TEST_SPLIT = [0.6, 0.2, 0.2]
+IMG_SIZE = 224
+DROPOUT = 0.5
+HIDDEN_LAYERS = [64, 32]
 BATCH_SIZE = 32
 LR = 1e-4
+WEIGHT_DECAY = 1e-4
 NUM_EPOCHS = 10
-IMG_SIZE = 224
 STEP_SIZE = 5
 GAMMA = 0.5
 
-
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {DEVICE}")
+
+
+# ========== Load Metadata and Create Label Mappings ==========
+print("Loading metadata and setting up label mappings...")
+df = pd.read_csv(META_FILE)
+
+label_conversion = {
+    'mel': 'mel',
+    'nv': 'nv',
+    'bcc': 'NMSC',
+    'akiec': 'NMSC',
+    'bkl': 'NMSC',
+    'df': 'NMSC',
+    'vasc': 'NMSC'
+}
+df['dx_grouped'] = df['dx'].map(label_conversion)
+
+label_2_idx = {label: idx for idx, label in enumerate(sorted(df['dx_grouped'].unique()))}
+idx_2_label = {idx: label for label, idx in label_2_idx.items()}
+
+sex_2_idx = {sex: idx for idx, sex in enumerate(df['sex'].dropna().unique())}
+localization_2_idx = {loc: idx for idx, loc in enumerate(df['localization'].dropna().unique())}
+
+label_2_description = {
+    'mel': "Melanoma",
+    'nv': "Melanocytic nevi",
+    'NMSC': "Non-melanoma skin cancer"
+}
+
+
+# ========== Data Splitting ==========
+print("Splitting data...")
+
+train_val_df, test_df = train_test_split(df, test_size=TRAIN_VAL_TEST_SPLIT[2], stratify=df['dx_grouped'])
+train_df, val_df = train_test_split(train_val_df, test_size=TRAIN_VAL_TEST_SPLIT[1] / (TRAIN_VAL_TEST_SPLIT[0] + TRAIN_VAL_TEST_SPLIT[1]), stratify=train_val_df['dx_grouped'])
 
 
 # ========== Dataset Class ==========
@@ -44,28 +88,20 @@ print("Setting up dataset...")
 
 class HAM10000Dataset(Dataset):
     def __init__(self, df, transform=None):
-        self.df = df.reset_index(drop=True)
         self.transform = transform
-        self.label_map = {label: idx for idx, label in enumerate(sorted(df['dx'].unique()))}
-        self.sex_map = {'male': 0, 'female': 1}
-        self.images = []
-        self.aux_data = []
-        self.labels = []
-
-        for _, row in tqdm(self.df.iterrows(), leave=False, desc="Loading images", dynamic_ncols=True):
-            image_path = os.path.join(DATA_DIR,
-                                      "HAM10000_images_part_1" if os.path.exists(os.path.join(DATA_DIR, "HAM10000_images_part_1", row["image_id"] + ".jpg"))
-                                      else "HAM10000_images_part_2",
-                                      row["image_id"] + ".jpg")
+        self.images, self.labels, self.aux_data = [], [], []
+        time.sleep(1)
+        for _, row in tqdm(df.iterrows(), total=len(df), desc="Loading images", leave=False):
+            img_folder = "HAM10000_images_part_1" if os.path.exists(os.path.join(DATA_DIR, "HAM10000_images_part_1", row['image_id'] + ".jpg")) else "HAM10000_images_part_2"
+            image_path = os.path.join(DATA_DIR, img_folder, row['image_id'] + ".jpg")
             image = Image.open(image_path).convert('RGB')
-            if transform:
-                image = transform(image)
-            self.images.append(image)
-
+            self.images.append(transform(image))
+            self.labels.append(label_2_idx[label_conversion[row['dx']]])
             age = row['age'] if not pd.isnull(row['age']) else 0
-            sex = self.sex_map.get(row['sex'], 0)
-            self.aux_data.append(torch.tensor([age / 100.0, sex], dtype=torch.float32))
-            self.labels.append(self.label_map[row['dx']])
+            sex = sex_2_idx.get(row['sex'], 0)
+            loc = localization_2_idx.get(row['localization'], 0)
+            self.aux_data.append(torch.tensor([age / 100.0, sex, loc], dtype=torch.float32))
+        time.sleep(1)
 
     def __len__(self):
         return len(self.labels)
@@ -73,21 +109,13 @@ class HAM10000Dataset(Dataset):
     def __getitem__(self, idx):
         return self.images[idx], self.aux_data[idx], self.labels[idx]
 
-# ========== Transform ==========
+# ========== Transformation ==========
 print("Setting up transforms...")
 
 transform = transforms.Compose([
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
     transforms.ToTensor()
 ])
-
-# ========== Data Prep ==========
-print("Loading and splitting data...")
-
-df = pd.read_csv(META_FILE)
-train_val_df, test_df = train_test_split(df, test_size=0.25, stratify=df['dx'], random_state=42)
-train_df, val_df = train_test_split(train_val_df, test_size=0.2, stratify=train_val_df['dx'], random_state=42)
-
 
 print("Preparing custom DataSets...")
 
@@ -105,7 +133,7 @@ test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE)
 # ========== Weighted CE Loss ==========
 print("Setting up weighted CE Loss...")
 
-label_counts = train_df['dx'].value_counts().sort_index()
+label_counts = train_df['dx_grouped'].value_counts().sort_index()
 class_weights = 1.0 / torch.tensor(label_counts.values, dtype=torch.float32)
 class_weights /= class_weights.sum()  # Normalize
 class_weights = class_weights.to(DEVICE)
@@ -114,18 +142,21 @@ class_weights = class_weights.to(DEVICE)
 print("Setting up model...")
 
 class CustomModel(nn.Module):
-    def __init__(self, num_classes, aux_input_dim=2):
+    def __init__(self, num_classes, aux_input_dim=3):
         super().__init__()
         self.base_model = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
         num_ftrs = self.base_model.fc.in_features
         self.base_model.fc = nn.Identity()
 
-        self.classifier = nn.Sequential(
-            nn.Linear(num_ftrs + aux_input_dim, 128),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(128, num_classes)
-        )
+        layers = []
+        input_dim = num_ftrs + aux_input_dim
+        for hidden_size in HIDDEN_LAYERS:
+            layers.append(nn.Linear(input_dim, hidden_size))
+            layers.append(nn.ReLU())
+            layers.append(nn.Dropout(DROPOUT))
+            input_dim = hidden_size
+        layers.append(nn.Linear(input_dim, num_classes))
+        self.classifier = nn.Sequential(*layers)
 
     def forward(self, x, aux):
         features = self.base_model(x)
@@ -137,15 +168,15 @@ print("Creating model, optimization criterion, optimizer and scheduler...")
 
 model = CustomModel(num_classes=len(label_counts)).to(DEVICE)
 criterion = nn.CrossEntropyLoss(weight=class_weights)
-optimizer = optim.Adam(model.parameters(), lr=LR)
+optimizer = optim.Adam(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=STEP_SIZE, gamma=GAMMA)
 
 # ========== Training & Eval ==========
 
 def criterion_metric(y_true, y_pred, y_probs):
-    y_probs_tensor = torch.tensor(y_probs, dtype=torch.float32, device=DEVICE)
-    y_true_tensor = torch.tensor(y_true, dtype=torch.long, device=DEVICE)
-    return criterion(y_probs_tensor, y_true_tensor).item()
+    y_probs = torch.tensor(y_probs, dtype=torch.float32, device=DEVICE)
+    y_true = torch.tensor(y_true, dtype=torch.long, device=DEVICE)
+    return criterion(y_probs, y_true).item()
 
 
 metrics = {
@@ -158,6 +189,8 @@ metrics = {
 print("Setting up training and evaluation functions...")
 
 def train_epoch(model, loader, optimizer, criterion, device):
+    time.sleep(1)
+
     model.train()
     losses = []
     loop = tqdm(loader, leave=False, desc="Training", dynamic_ncols=True)
@@ -169,9 +202,14 @@ def train_epoch(model, loader, optimizer, criterion, device):
         loss.backward()
         optimizer.step()
         losses.append(loss.item())
+
+    time.sleep(1)
+
     return sum(losses) / len(losses)
 
 def evaluate(model, loader, device, metrics):
+    time.sleep(1)
+
     model.eval()
     y_true, y_pred, y_probs = [], [], []
     loop = tqdm(loader, leave=False, desc="Evaluating", dynamic_ncols=True)
@@ -185,6 +223,8 @@ def evaluate(model, loader, device, metrics):
             y_true += labels.tolist()
             y_pred += preds.cpu().tolist()
             y_probs += probs.cpu().tolist()
+
+    time.sleep(1)
 
     results = {name: fn(y_true, y_pred, y_probs) for name, fn in metrics.items()}
     return results
@@ -200,16 +240,19 @@ for epoch in range(NUM_EPOCHS):
 
     train_results = evaluate(model, train_loader, DEVICE, metrics)
     val_results = evaluate(model, val_loader, DEVICE, metrics)
-    print(f"Train Loss: {train_loss:.4f}, Acc: {train_results['Accuracy']:.4f}, F1: {train_results['F1 Score']:.4f}, AUC: {train_results['AUC']:.4f}")
-    print(f"Val   Acc: {val_results['Accuracy']:.4f}, F1: {val_results['F1 Score']:.4f}, AUC: {val_results['AUC']:.4f}")
+
+    train_str = "Train " + " | ".join([f"{key}: {train_results[key]:.4f}" for key in train_results])
+    val_str = "Val   " + " | ".join([f"{key}: {val_results[key]:.4f}" for key in val_results])
+    print(train_str)
+    print(val_str)
 
     scheduler.step()
 
     train_stats.append(train_results)
     val_stats.append(val_results)
 
-# ========== Visualization ==========
-print("Visualizing results...")
+# ========== Training Process Visualization  ==========
+print("Visualizing training and validation metrics...")
 epochs = range(1, NUM_EPOCHS + 1)
 for metric_name in metrics.keys():
     train_metric_values = [stat[metric_name] for stat in train_stats]
@@ -223,20 +266,16 @@ for metric_name in metrics.keys():
     plt.show()
 
 
+# ========== Evaluation  ==========
+print("Evaluating on test set...")
+test_results = evaluate(model, test_loader, DEVICE, metrics)
+print(f"Test  Acc: {test_results['Accuracy']:.4f}, F1: {test_results['F1 Score']:.4f}, AUC: {test_results['AUC']:.4f}")
+
 
 # ========== GradCAM Visualization with Labels ==========
 print("Visualizing GradCAM with original images and predictions...")
 
-# Map numeric labels to class names
-label_names = [
-    "akiec",  # Actinic keratoses
-    "bcc",    # Basal cell carcinoma
-    "bkl",    # Benign keratosis-like lesions
-    "df",     # Dermatofibroma
-    "mel",    # Melanoma
-    "nv",     # Melanocytic nevi
-    "vasc"    # Vascular lesions
-]
+label_names = [label_2_description[idx_2_label[i]] for i in range(len(idx_2_label))]
 
 cam = GradCAM(model=model.base_model, target_layers=[model.base_model.layer4[-1]])
 model.eval()
@@ -258,16 +297,37 @@ for i in range(5):
     # Plot original + CAM side by side
     fig, axs = plt.subplots(1, 2, figsize=(10, 5))
     axs[0].imshow(img.permute(1, 2, 0).numpy())
-    axs[0].set_title(f"True: {label_names[label]}")
+    axs[0].set_title(f"True: {label_names[label]}", fontsize=14)
     axs[0].axis('off')
 
     axs[1].imshow(cam_image)
-    axs[1].set_title(f"Pred: {label_names[pred_label]}")
+    axs[1].set_title(f"Pred: {label_names[pred_label]}", fontsize=14)
     axs[1].axis('off')
 
     plt.tight_layout()
     plt.show()
 
+
+# ========== Confusion Matrix ==========
+print("Generating confusion matrix...")
+model.eval()
+y_true, y_pred = [], []
+with torch.no_grad():
+    for imgs, aux, labels in test_loader:
+        imgs, aux = imgs.to(DEVICE), aux.to(DEVICE)
+        out = model(imgs, aux)
+        pred = torch.argmax(out, dim=1)
+        y_true.extend(labels.numpy())
+        y_pred.extend(pred.cpu().numpy())
+
+cm = confusion_matrix(y_true, y_pred)
+labels = [label_2_description[idx_2_label[i]] for i in range(len(cm))]
+plt.figure(figsize=(8, 6))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=labels, yticklabels=labels)
+plt.xlabel("Predicted")
+plt.ylabel("True")
+plt.title("Confusion Matrix")
+plt.show()
 
 # ========== Save and Load Model ==========
 
@@ -278,24 +338,3 @@ model = CustomModel(num_classes=len(label_counts)).to(DEVICE)
 model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
 model.eval()
 print("Model loaded successfully.")
-
-# Get predictions and true labels
-y_pred = []
-y_true = []
-
-with torch.no_grad():
-    for imgs, aux, labels in tqdm(test_loader):
-        imgs, aux = imgs.to(DEVICE), aux.to(DEVICE)
-        outputs = model(imgs, aux)
-        _, predicted = torch.max(outputs.data, 1)
-        y_pred.extend(predicted.cpu().numpy())
-        y_true.extend(labels.cpu().numpy())
-
-# Create and plot confusion matrix
-cm = confusion_matrix(y_true, y_pred)
-plt.figure(figsize=(10, 8))
-sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
-plt.xlabel('Predicted')
-plt.ylabel('True')
-plt.title('Confusion Matrix')
-plt.show()
