@@ -20,7 +20,7 @@ from pytorch_grad_cam.utils.image import show_cam_on_image
 
 # ========== Parameters ==========
 print("Setting up paths...")
-DATA_DIR = "data"
+DATA_DIR = "archive"
 META_FILE = os.path.join(DATA_DIR, "HAM10000_metadata.csv")
 MODEL_PATH = "resnet18_ham10000.pt"
 
@@ -79,12 +79,13 @@ label_2_description = {
 # ========== Data Splitting ==========
 print("Splitting data...")
 
-train_val_df, test_df = train_test_split(df, test_size=TRAIN_VAL_TEST_SPLIT[2], stratify=df['dx_grouped'])
+train_val_df, test_df = train_test_split(df, test_size=TRAIN_VAL_TEST_SPLIT[2], stratify=df['dx_grouped'], random_state=83)
 #Save the test set to a CSV file
 test_df.to_csv("test_set.csv", index=False)
 
-train_df, val_df = train_test_split(train_val_df, test_size=TRAIN_VAL_TEST_SPLIT[1] / (TRAIN_VAL_TEST_SPLIT[0] + TRAIN_VAL_TEST_SPLIT[1]), stratify=train_val_df['dx_grouped'])
-
+train_df, val_df = train_test_split(train_val_df, test_size=TRAIN_VAL_TEST_SPLIT[1] / (TRAIN_VAL_TEST_SPLIT[0] + TRAIN_VAL_TEST_SPLIT[1]), stratify=train_val_df['dx_grouped'], random_state=83)
+train_df.to_csv("train_set.csv", index=False)
+val_df.to_csv("val_set.csv", index=False)
 
 # ========== Dataset Class ==========
 print("Setting up dataset...")
@@ -351,7 +352,7 @@ sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=labels, yticklabe
 plt.xlabel("Predicted")
 plt.ylabel("True")
 plt.title("Confusion Matrix")
-#save the confusion matrix as an image
+# save the confusion matrix as an image
 plt.savefig("confusion_matrix.png")
 plt.show()
 
