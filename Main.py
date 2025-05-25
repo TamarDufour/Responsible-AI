@@ -1,20 +1,15 @@
-# ========== Imports ==========
 import os
 import time
-
 import pandas as pd
 import numpy as np
-
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from sklearn.metrics import confusion_matrix
-
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torch import nn, optim
 from torchvision import transforms
 from torchvision.models import resnet18, ResNet18_Weights
-
 from tqdm import tqdm
 from PIL import Image
 import matplotlib.pyplot as plt
@@ -25,14 +20,19 @@ from pytorch_grad_cam.utils.image import show_cam_on_image
 
 # ========== Parameters ==========
 print("Setting up paths...")
-
-DATA_DIR = "archive"
+DATA_DIR = "data"
 META_FILE = os.path.join(DATA_DIR, "HAM10000_metadata.csv")
 MODEL_PATH = "resnet18_ham10000.pt"
 
 
 print("Setting up parameters...")
+#set seeds
 
+np.random.seed(55)
+torch.manual_seed(55)
+torch.cuda.manual_seed_all(55)
+
+# Define constants
 TRAIN_VAL_TEST_SPLIT = [0.6, 0.2, 0.2]
 IMG_SIZE = 224
 DROPOUT = 0.5
@@ -80,6 +80,9 @@ label_2_description = {
 print("Splitting data...")
 
 train_val_df, test_df = train_test_split(df, test_size=TRAIN_VAL_TEST_SPLIT[2], stratify=df['dx_grouped'])
+#Save the test set to a CSV file
+test_df.to_csv("test_set.csv", index=False)
+
 train_df, val_df = train_test_split(train_val_df, test_size=TRAIN_VAL_TEST_SPLIT[1] / (TRAIN_VAL_TEST_SPLIT[0] + TRAIN_VAL_TEST_SPLIT[1]), stratify=train_val_df['dx_grouped'])
 
 
@@ -94,7 +97,7 @@ class HAM10000Dataset(Dataset):
         for _, row in tqdm(df.iterrows(), total=len(df), desc="Loading images", leave=False):
             img_folder = "HAM10000_images_part_1" if os.path.exists(os.path.join(DATA_DIR, "HAM10000_images_part_1", row['image_id'] + ".jpg")) else "HAM10000_images_part_2"
             image_path = os.path.join(DATA_DIR, img_folder, row['image_id'] + ".jpg")
-            image = Image.open(image_path).convert('RGB')
+            image = Image.open(image_path)#.convert('RGB')
             self.images.append(transform(image))
             self.labels.append(label_2_idx[label_conversion[row['dx']]])
             age = row['age'] if not pd.isnull(row['age']) else 0
@@ -123,6 +126,18 @@ train_dataset = HAM10000Dataset(train_df, transform)
 val_dataset = HAM10000Dataset(val_df, transform)
 test_dataset = HAM10000Dataset(test_df, transform)
 
+test_images = torch.stack([img for img, _, _ in test_dataset])
+test_aux = torch.stack([aux for _, aux, _ in test_dataset])
+test_labels = torch.tensor([label for _, _, label in test_dataset])
+
+# Save tensors
+torch.save({
+    'images': test_images,
+    'aux': test_aux,
+    'labels': test_labels
+}, "test_data.pt")
+
+print("Test data saved to test_data.pt")
 
 print("Preparing DataLoaders...")
 
@@ -207,7 +222,7 @@ def train_epoch(model, loader, optimizer, criterion, device):
 
     return sum(losses) / len(losses)
 
-def evaluate(model, loader, device, metrics):
+def evaluate(model, loader, device, metrics, results_path):
     time.sleep(1)
 
     model.eval()
@@ -227,6 +242,13 @@ def evaluate(model, loader, device, metrics):
     time.sleep(1)
 
     results = {name: fn(y_true, y_pred, y_probs) for name, fn in metrics.items()}
+    #save the results to a CSV file
+    results_df = pd.DataFrame({
+        'y_true': y_true,
+        'y_pred': y_pred,
+        'y_probs': y_probs
+    })
+    results_df.to_csv(results_path, index=False)
     return results
 
 
@@ -238,8 +260,8 @@ for epoch in range(NUM_EPOCHS):
     print(f"Epoch {epoch + 1}/{NUM_EPOCHS}")
     train_loss = train_epoch(model, train_loader, optimizer, criterion, DEVICE)
 
-    train_results = evaluate(model, train_loader, DEVICE, metrics)
-    val_results = evaluate(model, val_loader, DEVICE, metrics)
+    train_results = evaluate(model, train_loader, DEVICE, metrics, "train_results.csv")
+    val_results = evaluate(model, val_loader, DEVICE, metrics, "val_results.csv")
 
     train_str = "Train " + " | ".join([f"{key}: {train_results[key]:.4f}" for key in train_results])
     val_str = "Val   " + " | ".join([f"{key}: {val_results[key]:.4f}" for key in val_results])
@@ -268,9 +290,11 @@ for metric_name in metrics.keys():
 
 # ========== Evaluation  ==========
 print("Evaluating on test set...")
-test_results = evaluate(model, test_loader, DEVICE, metrics)
+test_results = evaluate(model, test_loader, DEVICE, metrics, "test_results.csv")
 print(f"Test  Acc: {test_results['Accuracy']:.4f}, F1: {test_results['F1 Score']:.4f}, AUC: {test_results['AUC']:.4f}")
-
+#save the results to a CSV file
+test_results_df = pd.DataFrame(test_results, index=[0])
+test_results_df.to_csv("test_results_metrics.csv", index=False)
 
 # ========== GradCAM Visualization with Labels ==========
 print("Visualizing GradCAM with original images and predictions...")
@@ -327,6 +351,8 @@ sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=labels, yticklabe
 plt.xlabel("Predicted")
 plt.ylabel("True")
 plt.title("Confusion Matrix")
+#save the confusion matrix as an image
+plt.savefig("confusion_matrix.png")
 plt.show()
 
 # ========== Save and Load Model ==========
