@@ -353,7 +353,7 @@ plt.xlabel("Predicted")
 plt.ylabel("True")
 plt.title("Confusion Matrix")
 # save the confusion matrix as an image
-plt.savefig("confusion_matrix.png")
+plt.savefig("confusion_matrix_test.png")
 plt.show()
 
 # ========== Save and Load Model ==========
