@@ -182,8 +182,8 @@ def risk_prediction(y_probs, y_true, risk_threshold=0.15, title = "test"):
         If the patient has a melanoma probability greater than the risk threshold, they are considered at risk.
         Calculate the risk, and than create a confusion matrix based on the risk prediction.
         """
-        risk_prediction = [1 if prob[0] > risk_threshold else 0 for prob in y_probs]
-        y_true_binary = [1 if label == 0 else 0 for label in y_true]
+        risk_prediction = [1 if prob[1] > risk_threshold else 0 for prob in y_probs]
+        y_true_binary = [1 if label == 1 else 0 for label in y_true]
 
         #create confusion matrix based on risk prediction
         cm_risk = confusion_matrix(y_true_binary, risk_prediction, normalize='true') * 100
@@ -202,10 +202,6 @@ def risk_prediction(y_probs, y_true, risk_threshold=0.15, title = "test"):
 
 if __name__ == "__main__":
     print("start")
-    #label_2_description = {
-    #'mel': "Melanoma",
-    #'nv': "Melanocytic nevi",
-    #'NMSC': "Non-melanoma skin cancer" }
 
     print(f"Using device: {DEVICE}")
     MODEL_PATH = "resnet18_ham10000.pt"
@@ -224,6 +220,7 @@ if __name__ == "__main__":
     }
     metadata['dx_grouped'] = metadata['dx'].map(label_conversion)
     label_2_idx = {label: idx for idx, label in enumerate(sorted(metadata['dx_grouped'].unique()))}
+    print("Label to index mapping:", label_2_idx)
     idx_2_label = {idx: label for label, idx in label_2_idx.items()}
 
     train_loader, val_loader, test_loader = load_data(train_df, val_df, test_df)
