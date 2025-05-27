@@ -1,4 +1,4 @@
-# Responsible-AI - Skin Lesion Classification Modekl
+# Responsible-AI - Skin Lesion Classification Model
 
 This project implements a deep learning pipeline for classifying skin lesions using the HAM10000 dataset. A modified ResNet18 model is used, incorporating both image data and auxiliary patient metadata (age, sex, localization).
 
