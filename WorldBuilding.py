@@ -209,8 +209,8 @@ if __name__ == "__main__":
 
     print(f"Using device: {DEVICE}")
     MODEL_PATH = "resnet18_ham10000.pt"
-    train_df = pd.read_csv("Results files/train_set.csv")
-    val_df = pd.read_csv("Results files/val_set.csv")
+    train_df = pd.read_csv("train_set.csv")
+    val_df = pd.read_csv("val_set.csv")
     test_df = pd.read_csv("Results files/test_set.csv")
     metadata = pd.read_csv(META_FILE)
     label_conversion = {

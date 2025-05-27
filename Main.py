@@ -262,7 +262,7 @@ for epoch in range(NUM_EPOCHS):
     train_loss = train_epoch(model, train_loader, optimizer, criterion, DEVICE)
 
     train_results = evaluate(model, train_loader, DEVICE, metrics, "Results files/train_results.csv")
-    val_results = evaluate(model, val_loader, DEVICE, metrics, "Results files/val_results.csv")
+    val_results = evaluate(model, val_loader, DEVICE, metrics, "val_results.csv")
 
     train_str = "Train " + " | ".join([f"{key}: {train_results[key]:.4f}" for key in train_results])
     val_str = "Val   " + " | ".join([f"{key}: {val_results[key]:.4f}" for key in val_results])
