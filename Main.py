@@ -261,8 +261,8 @@ for epoch in range(NUM_EPOCHS):
     print(f"Epoch {epoch + 1}/{NUM_EPOCHS}")
     train_loss = train_epoch(model, train_loader, optimizer, criterion, DEVICE)
 
-    train_results = evaluate(model, train_loader, DEVICE, metrics, "train_results.csv")
-    val_results = evaluate(model, val_loader, DEVICE, metrics, "val_results.csv")
+    train_results = evaluate(model, train_loader, DEVICE, metrics, "Results files/train_results.csv")
+    val_results = evaluate(model, val_loader, DEVICE, metrics, "Results files/val_results.csv")
 
     train_str = "Train " + " | ".join([f"{key}: {train_results[key]:.4f}" for key in train_results])
     val_str = "Val   " + " | ".join([f"{key}: {val_results[key]:.4f}" for key in val_results])
@@ -291,7 +291,7 @@ for metric_name in metrics.keys():
 
 # ========== Evaluation  ==========
 print("Evaluating on test set...")
-test_results = evaluate(model, test_loader, DEVICE, metrics, "test_results.csv")
+test_results = evaluate(model, test_loader, DEVICE, metrics, "Results files/test_results.csv")
 print(f"Test  Acc: {test_results['Accuracy']:.4f}, F1: {test_results['F1 Score']:.4f}, AUC: {test_results['AUC']:.4f}")
 #save the results to a CSV file
 test_results_df = pd.DataFrame(test_results, index=[0])

@@ -209,9 +209,9 @@ if __name__ == "__main__":
 
     print(f"Using device: {DEVICE}")
     MODEL_PATH = "resnet18_ham10000.pt"
-    train_df = pd.read_csv("train_set.csv")
-    val_df = pd.read_csv("val_set.csv")
-    test_df = pd.read_csv("test_set.csv")
+    train_df = pd.read_csv("Results files/train_set.csv")
+    val_df = pd.read_csv("Results files/val_set.csv")
+    test_df = pd.read_csv("Results files/test_set.csv")
     metadata = pd.read_csv(META_FILE)
     label_conversion = {
         'mel': 'mel',
@@ -257,7 +257,7 @@ if __name__ == "__main__":
     }
 
     print("Evaluating on test set...")
-    test_results, test_results_df = evaluate(model, test_loader, DEVICE, metrics, "test_results.csv")
+    test_results, test_results_df = evaluate(model, test_loader, DEVICE, metrics, "Results files/test_results.csv")
 
 
     print(f"Test  Acc: {test_results['Accuracy']:.4f}, F1: {test_results['F1 Score']:.4f}, AUC: {test_results['AUC']:.4f}")
@@ -271,7 +271,7 @@ if __name__ == "__main__":
 
 
     print("Evaluating on train set...")
-    train_results, train_results_df = evaluate(model, train_loader, DEVICE, metrics, "train_results.csv")
+    train_results, train_results_df = evaluate(model, train_loader, DEVICE, metrics, "Results files/train_results.csv")
     print(
         f"Train Acc: {train_results['Accuracy']:.4f}, F1: {train_results['F1 Score']:.4f}, AUC: {train_results['AUC']:.4f}")
     # save the results to a CSV file
