@@ -47,12 +47,12 @@ LOAD_DATA_SPLITS = True
 TRAIN_VAL_TEST_SPLIT = [0.6, 0.2, 0.2]
 IMG_SIZE = 224
 DROPOUT = 0.5
-HIDDEN_LAYERS = [64, 32]
+HIDDEN_LAYERS = [256, 128, 64, 32]
 BATCH_SIZE = 32
 LR = 1e-4
 WEIGHT_DECAY = 1e-3
-NUM_EPOCHS = 40
-STEP_SIZE = 5
+NUM_EPOCHS = 20
+STEP_SIZE = 6
 GAMMA = 0.5
 
 # Transformations
@@ -61,10 +61,10 @@ VERTICAL_FLIP_PROB = 0.5
 ROTATION_DEGREES = 30
 RESIZE_SCALE = (0.9, 1.1)
 RESIZE_RATIO = (0.8, 1.0)
-BRIGHTNESS_JITTER = 0.25
-CONTRAST_JITTER = 0.25
-SATURATION_JITTER = 0.25
-HUE_JITTER = 0.25
+BRIGHTNESS_JITTER = 0.2
+CONTRAST_JITTER = 0.2
+SATURATION_JITTER = 0.2
+HUE_JITTER = 0.2
 RANDOM_ERASING_PROB = 0.2
 
 
@@ -383,6 +383,7 @@ for metric_name in metrics.keys():
     plt.plot(epochs, val_metric_values, label='Val')
     plt.title(metric_name)
     plt.xlabel("Epoch")
+    plt.xticks(epochs)
     plt.legend()
     plt.savefig(os.path.join(RESULTS_FOLDER, f"{metric_name} over epochs.png"))
     plt.show()
@@ -470,7 +471,7 @@ annot = np.empty_like(cm).astype(object)
 for i in range(cm.shape[0]):
     for j in range(cm.shape[1]):
         annot[i,j] = f"{cm[i,j]}\n{cm_perc[i,j]*100:.2f}%"
-sns.heatmap(cm, annot=annot, fmt="", cmap="Blues")
+sns.heatmap(cm_perc, annot=annot, fmt="", cmap="Blues")
 ax = plt.gca()
 ax.set_xticklabels(labels, rotation=45, ha="right", rotation_mode="anchor")
 ax.set_yticklabels(labels, rotation=45, ha="right", rotation_mode="anchor")
