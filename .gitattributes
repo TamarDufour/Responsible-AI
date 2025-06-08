@@ -1,3 +1,5 @@
 *.pt filter=lfs diff=lfs merge=lfs -text
+Results[[:space:]]files/*.png filter=lfs diff=lfs merge=lfs -text
+Results[[:space:]]files/*.csv filter=lfs diff=lfs merge=lfs -text
 *.png filter=lfs diff=lfs merge=lfs -text
 *.csv filter=lfs diff=lfs merge=lfs -text
