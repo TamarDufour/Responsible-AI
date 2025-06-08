@@ -9,16 +9,17 @@ from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, recall_scor
     average_precision_score
 from sklearn.metrics import confusion_matrix
 import torch
+from torch import tensor
 from torch.utils.data import Dataset, DataLoader
 from torch import nn, optim
 from torchvision import transforms
-from torchvision.models import resnet18, ResNet18_Weights
 from tqdm import tqdm
 from PIL import Image
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.image import show_cam_on_image
+import timm
 
 
 # ========== Seeds ==========
@@ -47,12 +48,15 @@ LOAD_DATA_SPLITS = True
 TRAIN_VAL_TEST_SPLIT = [0.6, 0.2, 0.2]
 IMG_SIZE = 224
 DROPOUT = 0.5
-HIDDEN_LAYERS = [256, 128, 64, 32]
+CONV_CHANNELS = [2048, 1024, 512, 512]
+CONV_KERNELS = [3, 3, 3, 3]
+CONV_PADDING = [1, 1, 1, 1]
+HIDDEN_LAYERS = [512, 256]
 BATCH_SIZE = 32
 LR = 1e-4
-WEIGHT_DECAY = 1e-3
-NUM_EPOCHS = 20
-STEP_SIZE = 6
+WEIGHT_DECAY = 1e-4
+NUM_EPOCHS = 50
+STEP_SIZE = 8
 GAMMA = 0.5
 
 # Transformations
@@ -145,7 +149,7 @@ class HAM10000Dataset(Dataset):
             age = row['age'] if not pd.isnull(row['age']) else -1
             sex = sex_2_idx.get(row['sex'], 0)
             loc = localization_2_idx.get(row['localization'], 0)
-            self.aux_data.append(torch.tensor([age / 100.0, sex, loc], dtype=torch.float32))
+            self.aux_data.append(tensor([age / 100.0, sex, loc], dtype=torch.float32))
         time.sleep(1)
 
     def __len__(self):
@@ -213,7 +217,7 @@ test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE)
 print("Setting up weighted CE Loss...")
 
 label_counts = train_df['label'].value_counts().sort_index()
-class_weights = 1.0 / torch.tensor(label_counts.values, dtype=torch.float32)
+class_weights = 1.0 / tensor(label_counts.values, dtype=torch.float32)
 class_weights /= class_weights.sum()
 class_weights = class_weights.to(DEVICE)
 
@@ -221,26 +225,46 @@ class_weights = class_weights.to(DEVICE)
 print("Setting up model...")
 
 class Melanoma_Model(nn.Module):
-    def __init__(self, num_classes, aux_input_dim=3):
+    def __init__(self, num_classes=3, aux_input_dim=3):
         super().__init__()
-        self.base_model = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
-        num_ftrs = self.base_model.fc.in_features
-        self.base_model.fc = nn.Identity()
+        base_model = timm.create_model('legacy_xception', pretrained=True, features_only=True)
+        self.backbone = base_model
+        last_channels = self.backbone.feature_info[-1]['num_chs']
+        last_shape = IMG_SIZE // self.backbone.feature_info[-1]['reduction']
+
+        self.conv_blocks = nn.ModuleList()
+        conv_channels = [last_channels] + CONV_CHANNELS
+        for in_ch, out_ch, kernel, pad in zip(conv_channels[:-1], conv_channels[1:], CONV_KERNELS, CONV_PADDING):
+            block = nn.Sequential(
+                nn.Conv2d(in_ch, out_ch, kernel_size=kernel, padding=pad, bias=False),
+                nn.BatchNorm2d(out_ch),
+                nn.ReLU(inplace=True),
+            )
+            self.conv_blocks.append(block)
+
+        self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
 
         layers = []
-        input_dim = num_ftrs + aux_input_dim
-        for hidden_size in HIDDEN_LAYERS:
-            layers.append(nn.Linear(input_dim, hidden_size))
-            layers.append(nn.ReLU())
-            layers.append(nn.Dropout(DROPOUT))
-            input_dim = hidden_size
-        layers.append(nn.Linear(input_dim, num_classes))
-        self.classifier = nn.Sequential(*layers)
+        last_channel = conv_channels[-1]
+        prev_dim = last_channel
+        for hdim in HIDDEN_LAYERS:
+            layers.append(nn.Linear(prev_dim, hdim, bias=False))
+            layers.append(nn.ReLU(inplace=True))
+            layers.append(nn.Dropout(p=DROPOUT))
+            prev_dim = hdim
+        layers.append(nn.Linear(prev_dim, num_classes))
+        self.classifier = nn.Sequential(nn.Flatten(), *layers)
 
-    def forward(self, x, aux):
-        features = self.base_model(x)
-        combined = torch.cat((features, aux), dim=1)
-        return self.classifier(combined)
+    def forward(self, x, aux=None):
+        out = self.backbone(x)[-1]
+
+        for block in self.conv_blocks:
+            out = block(out)
+
+        out = self.global_pool(out)
+
+        logits = self.classifier(out)
+        return logits
 
 
 print("Creating model, optimization criterion, optimizer and scheduler...")
@@ -253,13 +277,13 @@ scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=STEP_SIZE, gamma=GAMM
 # ========== Training & Eval ==========
 
 def criterion_metric(y_true, y_pred, y_probs):
-    y_probs = torch.tensor(y_probs, dtype=torch.float32, device=DEVICE)
-    y_true = torch.tensor(y_true, dtype=torch.long, device=DEVICE)
+    y_probs = tensor(y_probs, dtype=torch.float32, device=DEVICE)
+    y_true = tensor(y_true, dtype=torch.long, device=DEVICE)
     return criterion(y_probs, y_true).item()
 
 def true_positive_rate(y_true, y_pred, y_probs):
     cm = confusion_matrix(y_true, y_pred)
-    return np.mean([cm[i, i] / cm[i].sum() if cm[i].sum() > 0 else 0 for i in range(len(cm))])
+    return np.mean([cm[i, i] / cm[i].sum() if cm[i].sum() > 0 else 1 for i in range(len(cm))])
 
 def false_positive_rate(y_true, y_pred, y_probs):
     cm = confusion_matrix(y_true, y_pred)
@@ -349,7 +373,6 @@ def evaluate(model, loader, device, metrics):
     results = {name: fn(y_true, y_pred, y_probs) for name, fn in metrics.items()}
     return results
 
-
 # ========== Train Loop ==========
 print("Starting training loop...")
 
@@ -420,7 +443,7 @@ os.makedirs(RESULTS_FOLDER, exist_ok=True)
 
 label_names = [label_2_description[idx_2_label[i]] for i in range(len(idx_2_label))]
 
-cam = GradCAM(model=model.base_model, target_layers=[model.base_model.layer4[-1]])
+cam = GradCAM(model=model, target_layers=[model.conv_blocks[-1][0]])
 model.eval()
 
 for cls_idx in range(len(label_names)):
@@ -482,7 +505,7 @@ plt.tight_layout()
 plt.savefig(os.path.join(RESULTS_FOLDER, "confusion matrix test.png"))
 plt.show()
 
-cam = GradCAM(model=model.base_model, target_layers=[model.base_model.layer4[-1]])
+cam = GradCAM(model=model, target_layers=[model.conv_blocks[-1][0]])
 os.makedirs(RESULTS_FOLDER, exist_ok=True)
 n = len(label_names)
 fig, axes = plt.subplots(n, n, figsize=(n*3, n*3))
@@ -516,6 +539,6 @@ torch.save(model.state_dict(), MODEL_PATH)
 print(f"Model saved to {MODEL_PATH}")
 
 model = Melanoma_Model(num_classes=len(label_counts)).to(DEVICE)
-model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE, weights_only=False))
 model.eval()
 print("Model loaded successfully.")
