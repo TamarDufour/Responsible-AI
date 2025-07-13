@@ -28,4 +28,8 @@ source: https://www.kaggle.com/datasets/kmader/skin-cancer-mnist-ham10000
 - PIL
 - pytorch-grad-cam
 
+## Results
+All plots generated during model training and evaluation are available in the Results files folder in this repository.
+
+These include: AUC Curve, F1 Score, FNR, NPV, Precision, Recall, TNR, TPR, Confusion Matrix over the test set.
 
